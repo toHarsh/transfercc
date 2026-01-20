@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: transfercc
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -c gunicorn_config.py app:app
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: PORT
+        value: 5001
+    healthCheckPath: /health

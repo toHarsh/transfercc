@@ -1,0 +1,83 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Environment variables and secrets
+.env
+.env.local
+.env.*.local
+*.env
+
+# Firebase and service account keys (CRITICAL - contains private keys!)
+firebase-service-account.json
+*-firebase-adminsdk-*.json
+transfercc-*-firebase-adminsdk-*.json
+
+# Firebase config files (may contain API keys)
+config/firebase-web-config.json
+firebase-debug.log
+.firebase/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+firebase-debug.log
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Output directories (user-generated)
+output/
+exports/
+*.zip
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
