@@ -103,69 +103,6 @@ My next question is: ...
 
 Claude will have full context of your previous discussion!
 
-## 🗂️ Export Structure
-
-When you export to markdown, the tool creates:
-
-```
-output/
-├── Project Name 1/
-│   ├── conversation-title-1.md
-│   └── conversation-title-2.md
-├── Project Name 2/
-│   └── another-conversation.md
-└── _Unassigned/
-    └── conversations-without-project.md
-```
-
-## 📋 Markdown Format
-
-Each conversation is exported as:
-
-```markdown
-# Conversation Title
-
-**Project:** Project Name
-**Created:** January 15, 2026
-**Last Updated:** January 15, 2026
-**Model:** gpt-4
-
----
-
-### 👤 User – Jan 15, 2026 10:30 AM
-
-Your message here...
-
-### 🤖 Assistant – Jan 15, 2026 10:31 AM
-
-ChatGPT's response...
-```
-
-## 🔧 Advanced Usage
-
-### Programmatic Access
-
-```python
-from parser import ChatGPTParser
-
-# Load your export
-parser = ChatGPTParser("/path/to/export")
-parser.parse()
-
-# Get stats
-stats = parser.get_stats()
-print(f"Total conversations: {stats['total_conversations']}")
-
-# Search
-results = parser.search("machine learning")
-for conv in results:
-    print(f"- {conv.title}")
-
-# Export specific conversation
-conv = parser.conversations[0]
-markdown = conv.to_markdown()
-```
-
 ### Environment Variables (local-only)
 
 ```bash
