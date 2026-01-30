@@ -1,5 +1,6 @@
 # 🚀 Transfercc • ChatGPT history to Claude
-[Video demo](https://youtu.be/1eRAh0mrGX0)
+
+[![Video Demo](https://img.youtube.com/vi/1eRAh0mrGX0/maxresdefault.jpg)](https://youtu.be/1eRAh0mrGX0)
 
 A beautiful tool to migrate your ChatGPT conversations to Claude. Parse your ChatGPT export, browse your history with a slick web interface, and export conversations as markdown for easy context sharing.
 
