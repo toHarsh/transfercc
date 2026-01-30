@@ -25,8 +25,9 @@ A beautiful tool to migrate your ChatGPT conversations to Claude. Parse your Cha
 2. **Create a virtual environment**
    ```bash
    python3 -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   source venv/bin/activate
    ```
+   *On Windows: `venv\Scripts\activate`*
 
 3. **Install dependencies**
    ```bash
@@ -35,10 +36,10 @@ A beautiful tool to migrate your ChatGPT conversations to Claude. Parse your Cha
 
 4. **Start the app**
    ```bash
-   python app.py /path/to/your/chatgpt-export-folder
+   python3 app.py /path/to/your/chatgpt-export-folder
    ```
    
-   Then open [http://localhost:5000](http://localhost:5000) in your browser.
+   Open [http://localhost:5000](http://localhost:5000) in your browser.
 
 ## 📥 Export Your ChatGPT Data
 
@@ -71,10 +72,10 @@ You can also use the parser directly from the command line:
 
 ```bash
 # Just view stats
-python parser.py /path/to/your/chatgpt-export-folder
+python3 parser.py /path/to/your/chatgpt-export-folder
 
 # Export everything to markdown files
-python parser.py /path/to/your/chatgpt-export-folder --export ./output
+python3 parser.py /path/to/your/chatgpt-export-folder --export ./output
 ```
 
 ### Using with Claude
@@ -163,7 +164,7 @@ markdown = conv.to_markdown()
 
 ```bash
 # Change the port (optional)
-FLASK_RUN_PORT=8080 python app.py /path/to/export
+FLASK_RUN_PORT=8080 python3 app.py /path/to/export
 
 # Optional secret key override (generated automatically if not set)
 SECRET_KEY=your-secret-key-here
