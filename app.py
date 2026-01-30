@@ -4,7 +4,7 @@ Web interface for browsing, searching, and exporting ChatGPT conversations
 """
 
 import warnings
-# Suppress warnings BEFORE importing other modules
+# Suppress noisy warnings for cleaner local use
 warnings.filterwarnings('ignore', category=FutureWarning)
 warnings.filterwarnings('ignore', category=DeprecationWarning, module='parser')
 warnings.filterwarnings('ignore', message='.*urllib3.*OpenSSL.*')
@@ -28,8 +28,6 @@ import glob
 from datetime import datetime, timedelta
 import threading
 from collections import defaultdict
-from google.cloud import storage as gcs_storage, firestore
-import uuid
 
 # Load environment variables from .env file if it exists
 try:
@@ -68,131 +66,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Firebase Admin - ONLY for authentication token verification
-# Completely isolated from file processing/parsing
-FIREBASE_AUTH_ENABLED = False
-try:
-    import firebase_admin
-    from firebase_admin import credentials, auth
-    
-    firebase_config = os.environ.get('FIREBASE_CONFIG')
-    
-    # Also check for firebase-service-account.json in project directory
-    if not firebase_config:
-        project_dir = os.path.dirname(os.path.abspath(__file__))
-        default_config_path = os.path.join(project_dir, 'firebase-service-account.json')
-        if os.path.exists(default_config_path):
-            firebase_config = default_config_path
-            logger.info(f"Found Firebase config at default location: {default_config_path}")
-    
-    if firebase_config:
-        # Initialize Firebase Admin ONLY if config exists
-        if os.path.exists(firebase_config):
-            cred = credentials.Certificate(firebase_config)
-            firebase_admin.initialize_app(cred)
-        else:
-            # Try parsing as JSON string
-            # Environment variables often store JSON with literal newline characters in the private key
-            # JSON requires newlines to be escaped as \n, not literal newlines
-            try:
-                # First, try direct JSON parse (works if properly formatted)
-                cred_dict = json.loads(firebase_config)
-            except json.JSONDecodeError as initial_error:
-                # Environment variables may store the private key with literal newlines that break JSON parsing
-                # JSON requires newlines to be escaped as \n
-                # The issue is that literal newlines appear inside string values
-                try:
-                    # Simple and reliable approach: escape all literal control characters
-                    # that aren't already part of escape sequences
-                    # Process character by character to handle edge cases
-                    fixed_config = []
-                    i = 0
-                    while i < len(firebase_config):
-                        char = firebase_config[i]
-                        # Check if we're in an escape sequence (backslash followed by something)
-                        if char == '\\' and i + 1 < len(firebase_config):
-                            # This is an escape sequence, preserve it
-                            fixed_config.append(char)
-                            i += 1
-                            if i < len(firebase_config):
-                                fixed_config.append(firebase_config[i])
-                                i += 1
-                        elif char == '\n':
-                            # Literal newline - escape it
-                            fixed_config.append('\\n')
-                            i += 1
-                        elif char == '\r':
-                            # Literal carriage return - escape it
-                            fixed_config.append('\\r')
-                            i += 1
-                        elif char == '\t':
-                            # Literal tab - escape it
-                            fixed_config.append('\\t')
-                            i += 1
-                        elif ord(char) < 32:  # Other control characters
-                            # Escape other control characters
-                            fixed_config.append(f'\\u{ord(char):04x}')
-                            i += 1
-                        else:
-                            # Regular character, keep as is
-                            fixed_config.append(char)
-                            i += 1
-                    
-                    fixed_config = ''.join(fixed_config)
-                    
-                    # Try parsing the fixed config
-                    cred_dict = json.loads(fixed_config)
-                    logger.info("Successfully parsed FIREBASE_CONFIG after escaping control characters")
-                except (json.JSONDecodeError, Exception) as e2:
-                    # Fallback: simpler approach - escape all unescaped control characters
-                    try:
-                        # Protect already-escaped sequences
-                        fixed_config = firebase_config.replace('\\\\', '__TEMP_BS__')
-                        fixed_config = fixed_config.replace('\\n', '__TEMP_NL__')
-                        fixed_config = fixed_config.replace('\\r', '__TEMP_CR__')
-                        fixed_config = fixed_config.replace('\\t', '__TEMP_TAB__')
-                        
-                        # Escape all remaining literal control characters
-                        fixed_config = fixed_config.replace('\r\n', '\\n')
-                        fixed_config = fixed_config.replace('\r', '\\r')
-                        fixed_config = fixed_config.replace('\n', '\\n')
-                        fixed_config = fixed_config.replace('\t', '\\t')
-                        
-                        # Restore protected sequences
-                        fixed_config = fixed_config.replace('__TEMP_NL__', '\\n')
-                        fixed_config = fixed_config.replace('__TEMP_CR__', '\\r')
-                        fixed_config = fixed_config.replace('__TEMP_TAB__', '\\t')
-                        fixed_config = fixed_config.replace('__TEMP_BS__', '\\\\')
-                        
-                        cred_dict = json.loads(fixed_config)
-                        logger.info("Successfully parsed FIREBASE_CONFIG using fallback method")
-                    except json.JSONDecodeError as e3:
-                        # Log detailed error information
-                        logger.error(f"Failed to parse FIREBASE_CONFIG as JSON.")
-                        logger.error(f"Initial error: {initial_error}")
-                        logger.error(f"Regex fix error: {e2}")
-                        logger.error(f"Fallback fix error: {e3}")
-                        logger.error(f"Config length: {len(firebase_config)} chars")
-                        # Show error location
-                        error_pos = getattr(e3, 'pos', None) or getattr(e2, 'pos', None) or getattr(initial_error, 'pos', None)
-                        if error_pos:
-                            start = max(0, error_pos - 150)
-                            end = min(len(firebase_config), error_pos + 150)
-                            logger.error(f"Error around position {error_pos}: {repr(firebase_config[start:end])}")
-                        else:
-                            logger.error(f"Config preview (first 300 chars): {firebase_config[:300]}")
-                        raise ValueError(f"Invalid FIREBASE_CONFIG JSON. Could not parse after multiple attempts. Last error: {e3}")
-            
-            cred = credentials.Certificate(cred_dict)
-            firebase_admin.initialize_app(cred)
-        FIREBASE_AUTH_ENABLED = True
-        logger.info("Firebase Auth initialized (authentication only)")
-    else:
-        logger.info("Firebase Auth not configured - authentication disabled")
-except ImportError:
-    logger.warning("firebase-admin not installed. Authentication will be disabled.")
-except Exception as e:
-    logger.warning(f"Firebase Auth setup failed: {e}. Authentication disabled.")
+FIREBASE_AUTH_ENABLED = False  # Local-only mode; authentication disabled
 
 # User tracking - completely separate from Firebase
 USAGE_LOG_FILE = os.path.join(tempfile.gettempdir(), 'transfercc_usage.log')
@@ -208,44 +82,8 @@ def log_user_usage(user_email, user_id, action='login'):
     except Exception as e:
         logger.error(f"Error logging usage: {e}")
 
-# Google Cloud Storage and Firestore configuration
-# These are used for the new GCS-based upload pipeline
-# Bucket name is set here in code - can be overridden via environment variable
-UPLOAD_BUCKET = os.environ.get('UPLOAD_BUCKET', 'transfercc-589f7-uploads')
+# Local-only configuration: no Firestore/GCS; uploads are processed locally
 MAX_UPLOAD_SIZE_MB = int(os.environ.get('MAX_UPLOAD_SIZE_MB', '500'))
-
-# Log configuration on startup
-logger.info(f"GCS Upload Configuration:")
-logger.info(f"  UPLOAD_BUCKET: {UPLOAD_BUCKET}")
-logger.info(f"  MAX_UPLOAD_SIZE_MB: {MAX_UPLOAD_SIZE_MB}")
-
-# Initialize Firestore client (for job tracking)
-firestore_db = None
-firestore = None
-try:
-    from firebase_admin import firestore
-    if firebase_admin._apps:
-        firestore_db = firestore.client()
-        logger.info("Firestore client initialized")
-    else:
-        logger.warning("Firebase Admin not initialized - Firestore unavailable")
-except ImportError:
-    logger.warning("firebase-admin not available - Firestore features disabled")
-except Exception as e:
-    logger.warning(f"Failed to initialize Firestore: {e}")
-
-# Initialize Google Cloud Storage client
-storage_client = None
-try:
-    from google.cloud import storage
-    storage_client = storage.Client()
-    logger.info(f"Google Cloud Storage client initialized (bucket: {UPLOAD_BUCKET})")
-except ImportError:
-    logger.warning("google-cloud-storage not installed - GCS upload features disabled")
-except Exception as e:
-    # In development, this is expected - use INFO level instead of WARNING
-    log_level = logger.info if os.environ.get('FLASK_ENV') != 'production' else logger.warning
-    log_level(f"GCS client not initialized (expected in local dev): {e}")
 
 # Determine environment
 FLASK_ENV = os.environ.get('FLASK_ENV', 'development')
@@ -469,27 +307,11 @@ cleanup_thread = threading.Thread(target=periodic_ephemeral_cleanup, daemon=True
 cleanup_thread.start()
 logger.info("Ephemeral storage cleanup thread started")
 
-# Authentication - Google Sign-In with Firebase (isolated from file processing)
+# Authentication - disabled in local-only mode
 def login_required(f):
-    """Decorator to require Google Sign-In - isolated from file processing"""
+    """No-op decorator to keep routes simple for local use"""
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        # In production, Firebase MUST be configured
-        if IS_PRODUCTION and not FIREBASE_AUTH_ENABLED:
-            logger.error("Firebase Auth not configured in production! Authentication required.")
-            return jsonify({"error": "Authentication required. Please configure Firebase."}), 503
-        
-        # In development, allow access if Firebase not configured (for local testing)
-        if not FIREBASE_AUTH_ENABLED:
-            return f(*args, **kwargs)
-        
-        # Check session - NO Firebase calls here, just session check
-        user_id = session.get('user_id')
-        if not user_id:
-            return jsonify({"error": "Authentication required"}), 401
-        
-        # User authenticated - proceed with original function
-        # This function has NO access to Firebase - completely isolated
         return f(*args, **kwargs)
     
     return decorated_function
@@ -506,21 +328,15 @@ def add_security_headers(response):
     if IS_PRODUCTION:
         response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
     
-    # Content Security Policy - Allow Firebase and Google OAuth
-    # Required domains for Firebase Auth with Google Sign-In:
-    # - apis.google.com: Google OAuth API
-    # - accounts.google.com: OAuth redirects
-    # - www.gstatic.com: Firebase static resources
-    # - *.googleapis.com: Firebase/Google APIs
-    # - *.firebaseapp.com: Firebase hosting
+    # Content Security Policy - local-only
     csp = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://www.gstatic.com https://apis.google.com https://accounts.google.com; "
+        "script-src 'self' 'unsafe-inline'; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com; "
         "img-src 'self' data: https:; "
-        "connect-src 'self' https://*.googleapis.com https://*.firebaseapp.com https://*.firebaseio.com https://accounts.google.com; "
-        "frame-src 'self' https://accounts.google.com https://*.firebaseapp.com; "
+        "connect-src 'self'; "
+        "frame-src 'self'; "
         "frame-ancestors 'self';"
     )
     response.headers['Content-Security-Policy'] = csp
@@ -2532,8 +2348,6 @@ HTML_TEMPLATE = r"""
         }
     </style>
     <!-- Firebase SDK - ONLY for Google Sign-In on frontend -->
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 </head>
 <body>
     <div class="container">
@@ -2746,7 +2560,7 @@ HTML_TEMPLATE = r"""
         <div class="landing-page">
             <!-- Hero Section -->
             <div class="landing-hero">
-                <div class="hero-badge"><span>✨</span> Free</div>
+                <div class="hero-badge"><span>✨</span> Free & Open Source</div>
                 <h2 class="hero-title">Migrate your ChatGPT history to Claude</h2>
                 <p class="hero-description">
                     Browse, search, and export your conversations in Claude-ready markdown format. 
@@ -3824,12 +3638,12 @@ HTML_TEMPLATE = r"""
         
     </script>
     
-    <!-- Site Footer -->
+    <!-- Site Footer (reusable component) -->
     <footer class="site-footer">
         Created by <a href="https://x.com/thatproduktguy" target="_blank" rel="noopener noreferrer" id="twitterLink">@Harsh</a>
     </footer>
     
-    <!-- Twitter Preview Card -->
+    <!-- Profile Card (reusable component) -->
     <div class="twitter-preview-card" id="twitterPreviewCard">
         <div class="twitter-preview-header">
             <img src="/static/images/Profile.jpg" alt="Harsh" class="twitter-preview-avatar">
@@ -3934,131 +3748,23 @@ HTML_TEMPLATE = r"""
         const devLog = IS_PRODUCTION ? () => {} : console.log.bind(console);
         const devError = console.error.bind(console); // Always log errors
         
-        // Firebase Authentication - ISOLATED from file processing
+        // Local-only mode: authentication disabled, everything runs offline
         let firebaseApp = null;
         let currentUser = null;
-        // Store pending file for upload after login
         let pendingFile = null;
 
-        // Initialize Firebase - ONLY for auth
         async function initFirebase() {
-            try {
-                devLog('[FIREBASE] Initializing Firebase...');
-                devLog('[FIREBASE] Firebase SDK available:', typeof firebase !== 'undefined');
-                
-                const response = await fetch('/api/firebase-config');
-                const data = await response.json();
-                
-                devLog('[FIREBASE] Config response:', data);
-                
-                // Check if Firebase is configured
-                if (data.configured === false || !data.apiKey) {
-                    devLog('[FIREBASE] Firebase not configured - allowing access without authentication');
-                    // Still check auth status in case there's a session
-                    await checkAuthStatus();
-                    return;
-                }
-                
-                // Firebase is configured - initialize it
-                if (data.apiKey && typeof firebase !== 'undefined') {
-                    try {
-                        // Check if Firebase is already initialized
-                        if (firebase.apps.length > 0) {
-                            devLog('[FIREBASE] Firebase already initialized, using existing app');
-                            firebaseApp = firebase.app();
-                        } else {
-                            devLog('[FIREBASE] Initializing Firebase with config...');
-                            firebaseApp = firebase.initializeApp(data);
-                            devLog('[FIREBASE] Firebase initialized successfully');
-                        }
-                        await checkAuthStatus();
-                    } catch (initError) {
-                        devError('[FIREBASE] Error initializing Firebase:', initError);
-                        if (initError.code === 'app/duplicate-app') {
-                            devLog('[FIREBASE] Firebase app already exists, using it');
-                            firebaseApp = firebase.app();
-                            await checkAuthStatus();
-                        } else {
-                            throw initError;
-                        }
-                    }
-                } else {
-                    devError('[FIREBASE] Firebase SDK not loaded or no API key');
-                    if (typeof firebase === 'undefined') {
-                        devError('[FIREBASE] Firebase SDK scripts not loaded! Check if scripts are in HTML.');
-                    } else if (!data.apiKey) {
-                        devError('[FIREBASE] No API key in config:', data);
-                    }
-                    await checkAuthStatus();
-                }
-            } catch (e) {
-                devError('[FIREBASE] Firebase init error:', e);
-                devError('[FIREBASE] Error details:', e.message, e.stack);
-                // Even on error, check auth status
-                await checkAuthStatus();
-            }
+            devLog('[AUTH] Firebase disabled (local-only mode)');
+            return;
         }
 
-        // Check authentication - NO Firebase dependency after initial check
         async function checkAuthStatus() {
-            try {
-                const response = await fetch('/auth/status');
-                const data = await response.json();
-                
-                // If Firebase is not configured, don't show login modal
-                if (data.firebase_configured === false) {
-                    console.log('Firebase not configured - allowing access without authentication');
-                    return; // Don't show login modal, allow access
-                }
-                
-                // Firebase is configured - check if authenticated
-                if (data.authenticated) {
-                    currentUser = data.user;
-                    updateUserUI(data.user);
-                    
-                    // If there's a pending file, upload it now
-                    if (pendingFile) {
-                        const file = pendingFile;
-                        pendingFile = null;
-                        uploadFile(file);
-                    }
-                }
-                // Don't show login modal automatically - only when user tries to upload
-            } catch (e) {
-                console.error('Error checking auth status:', e);
-                // On error, if we can't determine status, don't block access
-            }
+            // Always allow in local-only mode
+            return { authenticated: true };
         }
         
-        // Check if user is authenticated (for upload)
         async function requireAuthForUpload() {
-            try {
-                const response = await fetch('/auth/status');
-                const data = await response.json();
-                
-                console.log('[AUTH] Auth status check:', data);
-                
-                // If Firebase not configured, allow upload (development mode)
-                if (data.firebase_configured === false) {
-                    console.log('[AUTH] Firebase not configured - allowing upload without authentication');
-                    return true;
-                }
-                
-                // If authenticated, allow upload
-                if (data.authenticated) {
-                    console.log('[AUTH] User authenticated - allowing upload');
-                    return true;
-                }
-                
-                // Not authenticated - return false
-                console.log('[AUTH] User not authenticated - blocking upload');
-                return false;
-            } catch (e) {
-                console.error('[AUTH] Error checking auth status:', e);
-                // On error, if Firebase is configured, block access
-                // If not configured, allow access
-                return true; // Default to allowing for development
-            }
+            return true;
         }
 
         // Show login modal
@@ -4127,140 +3833,12 @@ HTML_TEMPLATE = r"""
             }
         }
 
-        // Google Sign-In - ONLY uses Firebase for popup, then sends token to backend
+        // Local-only sign-in stub (no auth required)
         async function signInWithGoogle() {
-            devLog('[AUTH] signInWithGoogle called, firebaseApp:', firebaseApp);
-            devLog('[AUTH] Firebase SDK available:', typeof firebase !== 'undefined');
-            
-            // Check if Firebase SDK is loaded
-            if (typeof firebase === 'undefined') {
-                alert('Unable to load sign-in service. Please refresh the page and try again.');
-                console.error('[AUTH] Firebase SDK not available');
-                return;
-            }
-            
-            // Try to initialize Firebase if not already initialized
-            if (!firebaseApp) {
-                console.log('[AUTH] Firebase not initialized, attempting to initialize...');
-                try {
-                    await initFirebase();
-                } catch (initError) {
-                    console.error('[AUTH] Error during Firebase initialization:', initError);
-                }
-                
-                // Check again after initialization attempt
-                if (!firebaseApp) {
-                    // Try to get existing Firebase app
-                    try {
-                        if (firebase.apps && firebase.apps.length > 0) {
-                            console.log('[AUTH] Found existing Firebase app');
-                            firebaseApp = firebase.app();
-                        }
-                    } catch (e) {
-                        console.error('[AUTH] Error getting Firebase app:', e);
-                    }
-                    
-                    // If still not initialized, check backend status
-                    if (!firebaseApp) {
-                        try {
-                            const statusResponse = await fetch('/auth/status');
-                            const statusData = await statusResponse.json();
-                            
-                            if (statusData.firebase_configured === false) {
-                                alert('Authentication is not configured. The app is running in development mode without authentication.');
-                                document.getElementById('loginModalOverlay').classList.remove('active');
-                                return;
-                            }
-                        } catch (e) {
-                            console.error('Error checking Firebase status:', e);
-                        }
-                        
-                        // Get config and try manual initialization
-                        try {
-                            const configResponse = await fetch('/api/firebase-config');
-                            const configData = await configResponse.json();
-                            console.log('[AUTH] Config for manual init:', configData);
-                            
-                            // Check if config has apiKey (not null/undefined)
-                            if (configData.apiKey && configData.apiKey !== null && configData.apiKey !== 'null') {
-                                console.log('[AUTH] Attempting manual Firebase initialization...');
-                                // Remove any error/status fields before initializing
-                                const cleanConfig = {
-                                    apiKey: configData.apiKey,
-                                    authDomain: configData.authDomain,
-                                    projectId: configData.projectId,
-                                    storageBucket: configData.storageBucket,
-                                    messagingSenderId: configData.messagingSenderId,
-                                    appId: configData.appId
-                                };
-                                firebaseApp = firebase.initializeApp(cleanConfig);
-                                devLog('[AUTH] Manual initialization successful');
-                            } else {
-                                devError('[AUTH] No valid API key in config:', configData);
-                                throw new Error('No API key in config. Please set FIREBASE_WEB_CONFIG environment variable and restart the app.');
-                            }
-                        } catch (manualInitError) {
-                            console.error('[AUTH] Manual initialization failed:', manualInitError);
-                            alert('Firebase initialization failed. Please restart the Flask app with FIREBASE_WEB_CONFIG set. Error: ' + manualInitError.message);
-                            return;
-                        }
-                    }
-                }
-            }
-            
-            // Final check - verify Firebase is ready
-            if (!firebaseApp || typeof firebase === 'undefined' || !firebase.auth) {
-                console.error('[AUTH] Firebase not ready:', {
-                    firebaseApp: !!firebaseApp,
-                    firebaseSDK: typeof firebase !== 'undefined',
-                    firebaseAuth: typeof firebase !== 'undefined' && !!firebase.auth
-                });
-                alert('Firebase authentication is not ready. Please refresh the page and try again.');
-                return;
-            }
-            
-            console.log('[AUTH] Starting Google Sign-In...');
-            const provider = new firebase.auth.GoogleAuthProvider();
-            try {
-                const result = await firebase.auth().signInWithPopup(provider);
-                console.log('[AUTH] Sign-in successful, getting ID token...');
-                const idToken = await result.user.getIdToken();
-                console.log('[AUTH] ID token obtained, sending to backend...');
-                
-                // Send token to backend - backend verifies and creates session
-                const response = await fetch('/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ idToken: idToken })
-                });
-                
-                const data = await response.json();
-                if (data.success) {
-                    currentUser = data.user;
-                    updateUserUI(data.user);
-                    document.getElementById('loginModalOverlay').classList.remove('active');
-                    
-                    // Check if there's a pending file to upload
-                    if (pendingFile) {
-                        const file = pendingFile;
-                        pendingFile = null;
-                        // Small delay to ensure UI is updated
-                        setTimeout(() => {
-                            uploadFile(file);
-                        }, 300);
-                    } else {
-                        // No pending file, just reload
-                        window.location.reload();
-                    }
-                } else {
-                    const friendlyError = getUserFriendlyError({ message: data.error || 'Unknown error' });
-                    alert('Sign-in failed: ' + friendlyError);
-                }
-            } catch (error) {
-                console.error('Sign-in error:', error);
-                const friendlyError = getUserFriendlyError(error);
-                alert('Sign-in failed: ' + friendlyError);
-            }
+            devLog('[AUTH] Sign-in skipped (local-only mode)');
+            const overlay = document.getElementById('loginModalOverlay');
+            if (overlay) overlay.classList.remove('active');
+            return true;
         }
 
         // Update UI - NO Firebase dependency
@@ -4284,43 +3862,13 @@ HTML_TEMPLATE = r"""
 
         // Sign out - NO Firebase dependency after initial signout
         async function signOut() {
-            if (firebaseApp) {
-                await firebase.auth().signOut();
-            }
-            
-            await fetch('/logout', { method: 'POST' });
+            await fetch('/logout', { method: 'POST' }).catch(() => {});
             currentUser = null;
             window.location.reload();
         }
 
-        // Wait for Firebase SDK to load, then initialize
-        let firebaseWaitTimeout = null;
-        let firebaseWaitStart = Date.now();
-        const FIREBASE_MAX_WAIT = 5000; // 5 seconds max wait
-        
         function waitForFirebase() {
-            if (typeof firebase !== 'undefined') {
-                devLog('[FIREBASE] Firebase SDK loaded, initializing...');
-                if (firebaseWaitTimeout) clearTimeout(firebaseWaitTimeout);
-                initFirebase().catch(err => {
-                    console.error('[FIREBASE] Initialization error:', err);
-                    // Show page even if Firebase fails
-                    document.body.style.display = 'block';
-                });
-            } else {
-                const elapsed = Date.now() - firebaseWaitStart;
-                if (elapsed > FIREBASE_MAX_WAIT) {
-                    console.warn('[FIREBASE] Firebase SDK did not load within timeout, showing page anyway');
-                    document.body.style.display = 'block';
-                    // Try to check auth status without Firebase
-                    checkAuthStatus().catch(err => {
-                        console.error('[AUTH] Error checking auth status:', err);
-                    });
-                    return;
-                }
-                devLog('[FIREBASE] Waiting for Firebase SDK to load...');
-                firebaseWaitTimeout = setTimeout(waitForFirebase, 100);
-            }
+            document.body.style.display = 'block';
         }
         
         // Global error handler to prevent white screen
@@ -4511,59 +4059,8 @@ def serve_static(filename):
 
 @app.route('/login', methods=['POST'])
 def login():
-    """Google Sign-In endpoint - ONLY uses Firebase for token verification"""
-    if not FIREBASE_AUTH_ENABLED:
-        return jsonify({"error": "Authentication not configured"}), 503
-    
-    data = request.get_json()
-    id_token = data.get('idToken')
-    
-    if not id_token:
-        return jsonify({"error": "ID token required"}), 400
-    
-    try:
-        # ONLY Firebase call - verify token, then done with Firebase
-        decoded_token = auth.verify_id_token(id_token)
-        user_id = decoded_token['uid']
-        user_email = decoded_token.get('email', 'unknown')
-        user_name = decoded_token.get('name', '')
-        user_photo = decoded_token.get('picture', '')
-        
-        # Log usage - NO Firebase dependency
-        log_user_usage(user_email, user_id, action='login')
-        
-        # Store in session - NO Firebase dependency
-        session['user_id'] = user_id
-        session['user_email'] = user_email
-        session['user_name'] = user_name
-        session['user_photo'] = user_photo
-        session.permanent = True
-        session.modified = True  # Explicitly mark as modified to ensure Flask saves it
-        
-        logger.info(f"User logged in: {user_email}")
-        
-        return jsonify({
-            "success": True,
-            "user": {
-                "email": user_email,
-                "name": user_name,
-                "uid": user_id,
-                "photoURL": user_photo
-            }
-        })
-    except Exception as e:
-        logger.error(f"Login error: {e}")
-        # Return user-friendly error message
-        error_msg = str(e)
-        if IS_PRODUCTION:
-            # In production, don't expose technical details
-            if "invalid" in error_msg.lower() or "token" in error_msg.lower():
-                error_msg = "Sign-in failed. Please try again."
-            elif "network" in error_msg.lower() or "timeout" in error_msg.lower():
-                error_msg = "Network error. Please check your connection and try again."
-            else:
-                error_msg = "Sign-in failed. Please try again or contact support."
-        return jsonify({"error": error_msg}), 401
+    """Authentication disabled in local-only mode."""
+    return jsonify({"error": "Authentication disabled (local-only mode)"}), 503
 
 
 @app.route('/logout', methods=['POST'])
@@ -4582,129 +4079,12 @@ def logout():
 
 @app.route('/auth/status')
 def auth_status():
-    """Check auth status - NO Firebase dependency, just session check"""
-    # Return firebase_configured based on backend config, not frontend web config
-    # The backend can require auth even if frontend web config isn't set yet
-    firebase_configured = FIREBASE_AUTH_ENABLED
-    
-    if not firebase_configured:
-        return jsonify({
-            "authenticated": False,
-            "user": None,
-            "firebase_configured": False
-        })
-    
-    user_id = session.get('user_id')
-    if user_id:
-        return jsonify({
-            "authenticated": True,
-            "user": {
-                "email": session.get('user_email'),
-                "name": session.get('user_name'),
-                "uid": user_id,
-                "photoURL": session.get('user_photo', '')
-            }
-        })
-    else:
-        return jsonify({
-            "authenticated": False,
-            "user": None
-        })
-
-
-@app.route('/api/firebase-config')
-def get_firebase_config():
-    """Return Firebase web config - ONLY for frontend auth, not used elsewhere"""
-    web_config = os.environ.get('FIREBASE_WEB_CONFIG')
-    
-    # Fallback: try to read from firebase-web-config.json file
-    if not web_config:
-        project_dir = os.path.dirname(os.path.abspath(__file__))
-        # Support both legacy location (project root) and new organised location (config/)
-        candidate_paths = [
-            os.path.join(project_dir, 'firebase-web-config.json'),
-            os.path.join(project_dir, 'config', 'firebase-web-config.json'),
-        ]
-        for web_config_file in candidate_paths:
-        if os.path.exists(web_config_file):
-            try:
-                with open(web_config_file, 'r') as f:
-                    web_config_data = json.load(f)
-                    # Convert dict to JSON string for consistency
-                    web_config = json.dumps(web_config_data)
-                    logger.info(f"Loaded Firebase web config from file: {web_config_file}")
-                    break
-            except Exception as e:
-                    logger.error(f"Error reading firebase-web-config.json from {web_config_file}: {e}")
-    
-    logger.info(f"FIREBASE_WEB_CONFIG in environment: {'SET' if web_config else 'NOT SET'}")
-    
-    if web_config:
-        try:
-            config = json.loads(web_config)
-            logger.info(f"Firebase web config loaded successfully, has apiKey: {'apiKey' in config and bool(config.get('apiKey'))}")
-            return jsonify(config)
-        except Exception as e:
-            logger.error(f"Error parsing FIREBASE_WEB_CONFIG: {e}")
-            return jsonify({"error": "Invalid config", "details": str(e)}), 500
-    
-    # If backend has Firebase configured but web config not set, return error
-    if FIREBASE_AUTH_ENABLED:
-        logger.warning("FIREBASE_WEB_CONFIG not set but backend is configured")
-        return jsonify({
-            "configured": False,
-            "apiKey": None,
-            "error": "FIREBASE_WEB_CONFIG not set. Please set it to enable Google Sign-In.",
-            "backend_configured": True
-        }), 200
-    
-    # Return 200 with configured: false instead of 404 to avoid console errors
-    return jsonify({"configured": False, "error": "Firebase not configured"}), 200
-
-@app.route("/upload-url", methods=["POST"])
-def get_upload_url():
-    """Generate signed URL for direct upload to Google Cloud Storage"""
-    db = firestore.Client()
-    storage_client = gcs_storage.Client()
-
-    file_name = request.json.get("fileName")
-    content_type = request.json.get("contentType", "application/zip")
-
-    job_id = str(uuid.uuid4())
-
-    # Create Firestore job doc
-    job_ref = db.collection("jobs").document(job_id)
-    job_ref.set({
-        "status": "pending",
-        "progress": 0,
-        "message": "Upload not started",
-        "created_at": firestore.SERVER_TIMESTAMP,
-        "updated_at": firestore.SERVER_TIMESTAMP,
-    })
-
-    # GCS path: uploads/{job_id}/{file_name}
-    bucket = storage_client.bucket(os.environ.get("UPLOAD_BUCKET", "transfercc-589f7-uploads"))
-    blob = bucket.blob(f"uploads/{job_id}/{file_name}")
-
-    upload_url = blob.generate_signed_url(
-        version="v4",
-        expiration=timedelta(hours=1),
-        method="PUT",
-        content_type=content_type,
-    )
-
+    """Local-only mode: authentication is disabled."""
     return jsonify({
-        "jobId": job_id,
-        "uploadUrl": upload_url,
-        "bucketPath": blob.name,
+        "authenticated": False,
+        "user": None,
+        "firebase_configured": False
     })
-
-
-@app.route('/process-upload', methods=['POST'])
-@login_required
-def process_upload():
-    """Process upload endpoint - Firebase Storage not available, use direct upload"""
-    return jsonify({"error": "Firebase not configured", "useDirectUpload": True}), 400
 
 
 @app.route('/upload-chunk', methods=['POST'])
@@ -5376,36 +4756,7 @@ def load_export(export_path: str):
 
 # Environment validation for production
 def validate_production_config():
-    """Validate that all required config is set for production"""
-    if not IS_PRODUCTION:
-        return True
-    
-    errors = []
-    
-    if not FIREBASE_AUTH_ENABLED:
-        errors.append("FIREBASE_CONFIG must be set in production")
-    
-    web_config = os.environ.get('FIREBASE_WEB_CONFIG')
-    if not web_config:
-        # Check if file exists (support both old and new locations)
-        project_dir = os.path.dirname(os.path.abspath(__file__))
-        candidate_paths = [
-            os.path.join(project_dir, 'firebase-web-config.json'),
-            os.path.join(project_dir, 'config', 'firebase-web-config.json'),
-        ]
-        if not any(os.path.exists(path) for path in candidate_paths):
-            errors.append("FIREBASE_WEB_CONFIG must be set in production")
-    
-    if not os.environ.get('SECRET_KEY'):
-        errors.append("SECRET_KEY must be set in production")
-    
-    if errors:
-        logger.error("Production configuration errors:")
-        for error in errors:
-            logger.error(f"  - {error}")
-        return False
-    
-    logger.info("✅ Production configuration validated")
+    """Local-only mode: nothing to validate for production."""
     return True
 
 
@@ -5417,7 +4768,6 @@ def health_check():
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "environment": FLASK_ENV,
-        "firebase_configured": FIREBASE_AUTH_ENABLED,
         "storage_dir": STORAGE_DIR,
         "storage_writable": False,
         "cleanup_thread_running": False,
@@ -5445,12 +4795,6 @@ def health_check():
     except:
         status["cleanup_thread_running"] = False
     
-    # Check critical services
-    if IS_PRODUCTION and not FIREBASE_AUTH_ENABLED:
-        if status["status"] == "healthy":
-            status["status"] = "degraded"
-        status["warning"] = (status.get("warning", "") + "; Firebase not configured").lstrip("; ")
-    
     http_status = 200 if status["status"] == "healthy" else (503 if status["status"] == "unhealthy" else 200)
     return jsonify(status), http_status
 
@@ -5467,6 +4811,34 @@ def test():
 
 
 if __name__ == "__main__":
-    # ONLY for local development
-    # In production, this is handled by Firebase Functions via main.py
-    app.run(host="0.0.0.0", port=8080, debug=True)
+    import argparse
+    
+    parser_arg = argparse.ArgumentParser(description='TransferCC - ChatGPT to Claude Migration Tool')
+    parser_arg.add_argument('export_path', nargs='?', help='Path to ChatGPT export folder or ZIP file')
+    parser_arg.add_argument('--port', type=int, default=5000, help='Port to run the server on (default: 5000)')
+    parser_arg.add_argument('--host', default='127.0.0.1', help='Host to bind to (default: 127.0.0.1)')
+    
+    args = parser_arg.parse_args()
+    
+    # If export path provided, load it immediately
+    if args.export_path:
+        if not os.path.exists(args.export_path):
+            logger.error(f"Error: Path does not exist: {args.export_path}")
+            sys.exit(1)
+        try:
+            logger.info(f"Loading ChatGPT export from: {args.export_path}")
+            load_export(args.export_path)
+            stats = parser.get_stats() if parser else {}
+            logger.info(f"✓ Loaded {stats.get('total_conversations', 0)} conversations")
+        except Exception as e:
+            logger.error(f"Error loading export: {e}")
+            sys.exit(1)
+    
+    port = int(os.environ.get('FLASK_RUN_PORT', args.port))
+    host = os.environ.get('FLASK_RUN_HOST', args.host)
+    
+    logger.info(f"Starting TransferCC on http://{host}:{port}")
+    if not args.export_path:
+        logger.info("No export path provided - you can upload files via the web interface")
+    
+    app.run(host=host, port=port, debug=False)

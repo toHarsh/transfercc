@@ -18,11 +18,10 @@ This checklist ensures the project is ready for open source release.
 
 - [x] **`SECURITY.md` created** - Security policy and reporting guidelines
 
-- [x] **Example config file created** - `config/firebase-web-config.json.example`
-
 - [x] **README updated**:
   - Removed hardcoded user paths
-  - Added references to example files
+  - Removed all Firebase/cloud setup instructions
+  - Updated for local-only setup
   - Added Contributing and Security sections
 
 ## ⚠️ Action Required Before Publishing
@@ -36,12 +35,10 @@ git status
 ```
 
 Ensure these files are NOT listed (they should be ignored):
-- `firebase-service-account.json`
-- `transfercc-*-firebase-adminsdk-*.json`
-- `config/firebase-web-config.json` (the real one, not the .example)
 - `.env` files
 - `venv/` directory
-- `firebase-debug.log`
+- `*.log` files
+- Any sensitive configuration files
 
 ### 2. Remove Sensitive Files from Git History (if already committed)
 
@@ -49,40 +46,30 @@ If any sensitive files were previously committed, remove them from git history:
 
 ```bash
 # Remove from git cache (but keep local file)
-git rm --cached firebase-service-account.json
-git rm --cached transfercc-*-firebase-adminsdk-*.json
-git rm --cached config/firebase-web-config.json
+git rm --cached .env
+git rm --cached any-sensitive-files
 
 # If files were committed in previous commits, you may need to rewrite history
 # Use git filter-branch or BFG Repo-Cleaner for this
 ```
 
-### 3. Create .env.example File
-
-Create a `.env.example` file (if not already created) with placeholder values:
-
-```bash
-# See README.md for the structure
-# Copy the environment variables section from README
-```
-
-### 4. Review Code for Hardcoded Secrets
+### 3. Review Code for Hardcoded Secrets
 
 Search for any remaining hardcoded secrets:
 
 ```bash
-grep -r "AIza" --exclude-dir=venv --exclude-dir=.git .
+# Check for any hardcoded secrets (should find none)
 grep -r "private_key" --exclude-dir=venv --exclude-dir=.git .
-grep -r "secret" --exclude-dir=venv --exclude-dir=.git -i .
+grep -r "api[_-]?key" --exclude-dir=venv --exclude-dir=.git -i .
 ```
 
-### 5. Test the Setup
+### 4. Test the Setup
 
 1. Clone the repository in a fresh directory
 2. Follow the setup instructions in README
 3. Verify everything works without the sensitive files
 
-### 6. Update Repository Description
+### 5. Update Repository Description
 
 When publishing to GitHub/GitLab:
 - Add a clear description
@@ -90,7 +77,7 @@ When publishing to GitHub/GitLab:
 - Set up branch protection rules for `main`/`master`
 - Enable security alerts (GitHub)
 
-### 7. Optional: Add GitHub Templates
+### 6. Optional: Add GitHub Templates
 
 Consider adding:
 - Issue templates (bug report, feature request)
@@ -100,8 +87,9 @@ Consider adding:
 
 - The `.gitignore` file is comprehensive and should protect sensitive files
 - All sensitive files are already excluded from version control
-- Example files are provided for configuration
+- Project is **local-only** - no cloud services required
 - Documentation is updated to guide new users
+- All Firebase/GCS dependencies have been removed
 
 ## 🚀 Ready to Publish
 
