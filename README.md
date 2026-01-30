@@ -36,7 +36,7 @@ A beautiful tool to migrate your ChatGPT conversations to Claude. Parse your Cha
 
 4. **Start the app**
    ```bash
-   python3 app.py /path/to/your/chatgpt-export-folder
+   python3 app.py
    ```
    
    Open [http://localhost:5000](http://localhost:5000) in your browser.
@@ -52,13 +52,19 @@ Before using the app, you'll need to export your ChatGPT conversations:
 5. Wait for the email (usually 5-30 minutes)
 6. Download and **extract the ZIP file**
 
-Use the extracted folder path when starting the app in step 4 above.
+Once the app is running, you can upload your export file through the web interface.
 
 ## 📖 Usage
 
+### Upload Your Export
+
+1. Once the app is running, open [http://localhost:5000](http://localhost:5000)
+2. Click the upload area or drag and drop your ChatGPT export file (ZIP or JSON)
+3. Wait for processing to complete
+
 ### Web Interface
 
-Once the app is running, you can:
+After uploading, you can:
 
 1. **Browse by Project** – Use the sidebar to filter conversations by project
 2. **Search** – Type in the search box to find specific conversations
@@ -164,7 +170,10 @@ markdown = conv.to_markdown()
 
 ```bash
 # Change the port (optional)
-FLASK_RUN_PORT=8080 python3 app.py /path/to/export
+FLASK_RUN_PORT=8080 python3 app.py
+
+# Optional: Load export on startup (otherwise upload via web interface)
+python3 app.py /path/to/export
 
 # Optional secret key override (generated automatically if not set)
 SECRET_KEY=your-secret-key-here
