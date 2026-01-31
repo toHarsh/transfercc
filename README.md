@@ -7,6 +7,8 @@ A beautiful tool to migrate your ChatGPT conversations to Claude. Parse your Cha
 ![Python](https://img.shields.io/badge/Python-3.8+-orange?style=flat-square)
 ![Flask](https://img.shields.io/badge/Flask-3.0-coral?style=flat-square)
 
+**🌐 Try it online:** [https://transfercc-589f7.web.app/](https://transfercc-589f7.web.app/) *(Note: May not work due to server issues - local installation recommended)*
+
 ## ✨ Features
 
 - **📂 Parse ChatGPT Exports** – Handles the full `conversations.json` structure including projects
